@@ -63,6 +63,17 @@ app.all("/slack/events", async (c) => {
     const { text, channel, thread_ts, ts } = payload;
     const threadId = thread_ts || ts;
     const kvKey = `thread:${channel}:${threadId}`;
+    const isDebugMode = text.includes("[DEBUG]");
+    const debugInfo: string[] = [];
+
+    if (isDebugMode) {
+      debugInfo.push("🔍 *DEBUG MODE ENABLED*");
+      debugInfo.push(`Channel: ${channel}`);
+      debugInfo.push(`Thread TS: ${thread_ts || "None (new thread)"}`);
+      debugInfo.push(`Message TS: ${ts}`);
+      debugInfo.push(`Thread ID: ${threadId}`);
+      debugInfo.push(`KV Key: ${kvKey}`);
+    }
 
     try {
       // Add eyes emoji reaction to show we're processing
@@ -71,12 +82,21 @@ app.all("/slack/events", async (c) => {
         timestamp: ts,
         name: "eyes",
       });
+      
       // Check if this thread already has a topic ID
       let topicId = await c.env.KV.get(kvKey);
+      
+      if (isDebugMode) {
+        debugInfo.push(`Existing Topic ID: ${topicId || "None (will create new)"}`);
+      }
 
       // Create a new topic if one doesn't exist
       if (!topicId) {
         console.log("Creating new topic for thread:", kvKey);
+        if (isDebugMode) {
+          debugInfo.push("Creating new topic...");
+        }
+        
         const topicResponse = await fetch(
           "https://api-dsc.mintlify.com/v1/chat/topic",
           {
@@ -112,13 +132,29 @@ app.all("/slack/events", async (c) => {
 
         const topicData = (await topicResponse.json()) as { topicId: string };
         topicId = topicData.topicId;
+        
+        if (isDebugMode) {
+          debugInfo.push(`Created Topic ID: ${topicId}`);
+        }
 
         // Store the mapping in KV
         await c.env.KV.put(kvKey, topicId!, { expirationTtl: 86400 * 7 }); // Expire after 7 days
+        
+        if (isDebugMode) {
+          debugInfo.push(`Stored in KV with 7-day TTL`);
+        }
       }
 
       // Send the message to the Mintlify API
       console.log("Sending message to topic:", topicId);
+      const cleanedMessage = text.replace(/<@[A-Z0-9]+>/g, "").replace("[DEBUG]", "").trim();
+      
+      if (isDebugMode) {
+        debugInfo.push(`Original message: "${text}"`);
+        debugInfo.push(`Cleaned message: "${cleanedMessage}"`);
+        debugInfo.push(`Sending to topic: ${topicId}`);
+      }
+      
       const messageResponse = await fetch(
         "https://api-dsc.mintlify.com/v1/chat/message",
         {
@@ -129,7 +165,7 @@ app.all("/slack/events", async (c) => {
           },
           body: JSON.stringify({
             topicId: topicId,
-            message: text.replace(/<@[A-Z0-9]+>/g, "").trim(), // Remove bot mention
+            message: cleanedMessage,
           }),
         }
       );
@@ -158,6 +194,11 @@ app.all("/slack/events", async (c) => {
 
       const responseData = await messageResponse.text();
       const [displayText, sourcesRaw] = responseData.split("||");
+      
+      if (isDebugMode) {
+        debugInfo.push(`Response received (${responseData.length} chars)`);
+        debugInfo.push(`Sources data: ${sourcesRaw ? "Yes" : "No"}`);
+      }
 
       // Convert markdown to Slack formatting
       let slackFormattedText = markdownToSlack(displayText);
@@ -170,6 +211,10 @@ app.all("/slack/events", async (c) => {
             metadata?: { title?: string };
           }>;
           if (sources && sources.length > 0) {
+            if (isDebugMode) {
+              debugInfo.push(`Found ${sources.length} sources`);
+            }
+            
             const sourceLinks = sources
               .map((source, index) => {
                 const baseUrl = "https://docs.firstquadrant.ai/";
@@ -179,18 +224,21 @@ app.all("/slack/events", async (c) => {
                 return `<${fullUrl}|[${index + 1}]>`;
               })
               .join(" ");
-            slackFormattedText += `\n\nSources: ${sourceLinks}`;
+            slackFormattedText += `\n\n${sourceLinks}`;
           }
         } catch (e) {
           console.error("Failed to parse sources:", e);
         }
       }
+      
+      // Add debug info to the response if in debug mode
+      if (isDebugMode) {
+        debugInfo.push("\n*Response sent successfully*");
+        slackFormattedText = debugInfo.join("\n") + "\n\n---\n\n" + slackFormattedText;
+      }
 
       // Reply in the thread
-      await context.say({
-        text: slackFormattedText,
-        thread_ts: threadId,
-      });
+      await context.say({ text: slackFormattedText, thread_ts: threadId });
 
       // Remove the eyes emoji reaction after responding
       await context.client.reactions.remove({
