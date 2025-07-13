@@ -9,10 +9,12 @@ interface CloudflareBindings {
 }
 
 function markdownToSlack(markdown: string): string {
-  // First convert bold (must be done before italic to avoid conflicts)
-  let text = markdown
-    .replace(/\*\*(.+?)\*\*/g, "*$1*")
-    .replace(/__(.+?)__/g, "*$1*");
+  let text = markdown;
+
+  // First handle bold text (including at start of lines)
+  text = text
+    .replace(/\*\*([^*]+)\*\*/g, "*$1*")
+    .replace(/__([^_]+)__/g, "*$1*");
 
   // Then convert headers
   text = text
@@ -20,8 +22,16 @@ function markdownToSlack(markdown: string): string {
     .replace(/^## (.+)$/gm, "*$1*")
     .replace(/^# (.+)$/gm, "*$1*");
 
+  // Convert lists - must be done before converting remaining single asterisks
+  text = text
+    .replace(/^[\*\-] (.+)$/gm, "• $1")
+    .replace(/^\d+\. (.+)$/gm, "• $1");
+
   // Convert the rest
   text = text
+    // Italic (only for single asterisks/underscores not at start of line)
+    .replace(/(?<!^)\*([^*\n]+)\*/g, "_$1_")
+    .replace(/(?<!^)_([^_\n]+)_/g, "_$1_")
     // Strikethrough
     .replace(/~~(.+?)~~/g, "~$1~")
     // Code blocks
@@ -32,10 +42,6 @@ function markdownToSlack(markdown: string): string {
     .replace(/`(.+?)`/g, "`$1`")
     // Links
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "<$2|$1>")
-    // Unordered lists
-    .replace(/^[\*\-] (.+)$/gm, "• $1")
-    // Ordered lists
-    .replace(/^\d+\. (.+)$/gm, "• $1")
     // Blockquotes
     .replace(/^> (.+)$/gm, "> $1")
     // Remove excessive newlines
@@ -58,9 +64,14 @@ app.all("/slack/events", async (c) => {
   };
   const slackApp = new SlackApp({ env } as any);
 
-  // Handle app_mention events
-  slackApp.event("app_mention", async ({ payload, context }) => {
-    const { text, channel, thread_ts, ts } = payload;
+  // Shared message handler
+  const handleMessage = async (
+    text: string,
+    channel: string,
+    thread_ts: string | undefined,
+    ts: string,
+    context: any
+  ) => {
     const threadId = thread_ts || ts;
     const kvKey = `thread:${channel}:${threadId}`;
     const isDebugMode = text.includes("[DEBUG]");
@@ -73,6 +84,11 @@ app.all("/slack/events", async (c) => {
       debugInfo.push(`Message TS: ${ts}`);
       debugInfo.push(`Thread ID: ${threadId}`);
       debugInfo.push(`KV Key: ${kvKey}`);
+
+      // Check if this message includes thread history
+      if (text.includes("Previous conversation in this thread:")) {
+        debugInfo.push("Thread history included: Yes");
+      }
     }
 
     try {
@@ -82,12 +98,14 @@ app.all("/slack/events", async (c) => {
         timestamp: ts,
         name: "eyes",
       });
-      
+
       // Check if this thread already has a topic ID
       let topicId = await c.env.KV.get(kvKey);
-      
+
       if (isDebugMode) {
-        debugInfo.push(`Existing Topic ID: ${topicId || "None (will create new)"}`);
+        debugInfo.push(
+          `Existing Topic ID: ${topicId || "None (will create new)"}`
+        );
       }
 
       // Create a new topic if one doesn't exist
@@ -96,7 +114,7 @@ app.all("/slack/events", async (c) => {
         if (isDebugMode) {
           debugInfo.push("Creating new topic...");
         }
-        
+
         const topicResponse = await fetch(
           "https://api-dsc.mintlify.com/v1/chat/topic",
           {
@@ -132,14 +150,14 @@ app.all("/slack/events", async (c) => {
 
         const topicData = (await topicResponse.json()) as { topicId: string };
         topicId = topicData.topicId;
-        
+
         if (isDebugMode) {
           debugInfo.push(`Created Topic ID: ${topicId}`);
         }
 
         // Store the mapping in KV
         await c.env.KV.put(kvKey, topicId!, { expirationTtl: 86400 * 7 }); // Expire after 7 days
-        
+
         if (isDebugMode) {
           debugInfo.push(`Stored in KV with 7-day TTL`);
         }
@@ -147,14 +165,17 @@ app.all("/slack/events", async (c) => {
 
       // Send the message to the Mintlify API
       console.log("Sending message to topic:", topicId);
-      const cleanedMessage = text.replace(/<@[A-Z0-9]+>/g, "").replace("[DEBUG]", "").trim();
-      
+      const cleanedMessage = text
+        .replace(/<@[A-Z0-9]+>/g, "")
+        .replace("[DEBUG]", "")
+        .trim();
+
       if (isDebugMode) {
         debugInfo.push(`Original message: "${text}"`);
         debugInfo.push(`Cleaned message: "${cleanedMessage}"`);
         debugInfo.push(`Sending to topic: ${topicId}`);
       }
-      
+
       const messageResponse = await fetch(
         "https://api-dsc.mintlify.com/v1/chat/message",
         {
@@ -194,7 +215,7 @@ app.all("/slack/events", async (c) => {
 
       const responseData = await messageResponse.text();
       const [displayText, sourcesRaw] = responseData.split("||");
-      
+
       if (isDebugMode) {
         debugInfo.push(`Response received (${responseData.length} chars)`);
         debugInfo.push(`Sources data: ${sourcesRaw ? "Yes" : "No"}`);
@@ -214,7 +235,7 @@ app.all("/slack/events", async (c) => {
             if (isDebugMode) {
               debugInfo.push(`Found ${sources.length} sources`);
             }
-            
+
             const sourceLinks = sources
               .map((source, index) => {
                 const baseUrl = "https://docs.firstquadrant.ai/";
@@ -230,11 +251,12 @@ app.all("/slack/events", async (c) => {
           console.error("Failed to parse sources:", e);
         }
       }
-      
+
       // Add debug info to the response if in debug mode
       if (isDebugMode) {
         debugInfo.push("\n*Response sent successfully*");
-        slackFormattedText = debugInfo.join("\n") + "\n\n---\n\n" + slackFormattedText;
+        slackFormattedText =
+          debugInfo.join("\n") + "\n\n---\n\n" + slackFormattedText;
       }
 
       // Reply in the thread
@@ -266,6 +288,77 @@ app.all("/slack/events", async (c) => {
         }`,
         thread_ts: threadId,
       });
+    }
+  };
+
+  // Handle app_mention events
+  slackApp.event("app_mention", async ({ payload, context }) => {
+    let messageText = payload.text;
+
+    // If this is in a thread, fetch the entire thread history
+    if (payload.thread_ts) {
+      try {
+        const threadMessages = await context.client.conversations.replies({
+          channel: payload.channel,
+          ts: payload.thread_ts,
+          limit: 100, // Fetch up to 100 messages in the thread
+        });
+
+        if (threadMessages.messages && threadMessages.messages.length > 1) {
+          // Build conversation history (excluding the current message)
+          const history = threadMessages.messages
+            .filter((msg) => msg.ts !== payload.ts) // Exclude current message
+            .map((msg) => {
+              const sender = msg.bot_id ? "Assistant" : "User";
+              return `${sender}: ${msg.text || ""}`;
+            })
+            .join("\n");
+
+          // Prepend history to the current message
+          messageText = `Previous conversation in this thread:\n${history}\n\nCurrent message: ${payload.text}`;
+        }
+      } catch (error) {
+        console.error("Failed to fetch thread history:", error);
+      }
+    }
+
+    await handleMessage(
+      messageText,
+      payload.channel,
+      payload.thread_ts,
+      payload.ts,
+      context
+    );
+  });
+
+  // Handle message events in threads
+  slackApp.event("message", async ({ payload, context }) => {
+    // Type guard to check if this is a regular message with text
+    if (
+      "text" in payload &&
+      payload.text &&
+      "thread_ts" in payload &&
+      payload.thread_ts
+    ) {
+      // Skip if this is a bot message
+      if ("subtype" in payload && payload.subtype === "bot_message") {
+        return;
+      }
+
+      // Check if bot has participated in this thread
+      const kvKey = `thread:${payload.channel}:${payload.thread_ts}`;
+      const topicId = await c.env.KV.get(kvKey);
+
+      // Only respond if we have a topic ID for this thread (meaning bot has responded before)
+      if (topicId) {
+        await handleMessage(
+          payload.text,
+          payload.channel,
+          payload.thread_ts,
+          payload.ts,
+          context
+        );
+      }
     }
   });
 
