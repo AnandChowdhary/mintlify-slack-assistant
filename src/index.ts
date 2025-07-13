@@ -171,7 +171,13 @@ app.all("/slack/events", async (c) => {
           }>;
           if (sources && sources.length > 0) {
             const sourceLinks = sources
-              .map((source, index) => `<${source.link}|[${index + 1}]>`)
+              .map((source, index) => {
+                const baseUrl = "https://docs.firstquadrant.ai/";
+                const fullUrl = source.link.startsWith("http")
+                  ? source.link
+                  : baseUrl + source.link;
+                return `<${fullUrl}|[${index + 1}]>`;
+              })
               .join(" ");
             slackFormattedText += `\n\nSources: ${sourceLinks}`;
           }
