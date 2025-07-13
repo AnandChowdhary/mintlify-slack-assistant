@@ -143,12 +143,15 @@ app.all("/slack/events", async (c) => {
       // Parse and add sources if available
       if (sourcesRaw) {
         try {
-          const sources = JSON.parse(sourcesRaw) as Array<{ url: string }>;
+          const sources = JSON.parse(sourcesRaw) as Array<{
+            link: string;
+            metadata?: { title?: string };
+          }>;
           if (sources && sources.length > 0) {
             const sourceLinks = sources
-              .map((source, index) => `<${source.url}|[${index + 1}]>`)
+              .map((source, index) => `<${source.link}|[${index + 1}]>`)
               .join(" ");
-            slackFormattedText += `\n\n*Sources:* ${sourceLinks}`;
+            slackFormattedText += `\n\nSources: ${sourceLinks}`;
           }
         } catch (e) {
           console.error("Failed to parse sources:", e);
