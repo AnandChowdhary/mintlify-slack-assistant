@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { SlackApp } from "slack-cloudflare-workers";
 
+const MINTLIFY_PUBLIC_ASSISTANT_API_KEY = "mint_dsc_3ZjkTEgxnSv9oVS8HCMV3xkC";
 interface CloudflareBindings {
   SLACK_BOT_USER_OAUTH_TOKEN: string;
   MINTLIFY_PUBLIC_ASSISTANT_API_KEY: string;
@@ -75,7 +76,7 @@ app.all("/slack/events", async (c) => {
           {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${c.env.MINTLIFY_PUBLIC_ASSISTANT_API_KEY}`,
+              Authorization: `Bearer ${MINTLIFY_PUBLIC_ASSISTANT_API_KEY}`,
               "Content-Type": "application/json",
             },
           }
@@ -109,7 +110,7 @@ app.all("/slack/events", async (c) => {
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${c.env.MINTLIFY_PUBLIC_ASSISTANT_API_KEY}`,
+            Authorization: `Bearer ${MINTLIFY_PUBLIC_ASSISTANT_API_KEY}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -138,7 +139,7 @@ app.all("/slack/events", async (c) => {
 
       // Convert markdown to Slack formatting
       let slackFormattedText = markdownToSlack(displayText);
-      
+
       // Parse and add sources if available
       if (sourcesRaw) {
         try {
@@ -146,7 +147,7 @@ app.all("/slack/events", async (c) => {
           if (sources && sources.length > 0) {
             const sourceLinks = sources
               .map((source, index) => `<${source.url}|[${index + 1}]>`)
-              .join(' ');
+              .join(" ");
             slackFormattedText += `\n\n*Sources:* ${sourceLinks}`;
           }
         } catch (e) {
