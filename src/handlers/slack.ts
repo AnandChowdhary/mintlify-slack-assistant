@@ -15,7 +15,7 @@ export class SlackMessageHandler {
     const debugInfo: string[] = [];
     const { text, channel, thread_ts, ts } = context;
     const threadId = thread_ts || ts;
-    const kvKey = `thread:${channel}:${threadId}`;
+    const kvKey = `mintlify-thread:${channel}:${threadId}`;
 
     debugInfo.push("🔍 *DEBUG MODE ENABLED*");
     debugInfo.push(`Channel: ${channel}`);
