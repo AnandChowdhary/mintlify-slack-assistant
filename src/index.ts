@@ -46,7 +46,7 @@ app.all("/slack/events", async (c) => {
       }
 
       // Check if bot has participated in this thread
-      const kvKey = `thread:${payload.channel}:${payload.thread_ts}`;
+      const kvKey = `mintlify-thread:${payload.channel}:${payload.thread_ts}`;
       const topicId = await c.env.KV.get(kvKey);
 
       // Only respond if we have a topic ID for this thread (meaning bot has responded before)
