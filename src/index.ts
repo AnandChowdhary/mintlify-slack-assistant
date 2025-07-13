@@ -65,6 +65,12 @@ app.all("/slack/events", async (c) => {
     const kvKey = `thread:${channel}:${threadId}`;
 
     try {
+      // Add eyes emoji reaction to show we're processing
+      await context.client.reactions.add({
+        channel: channel,
+        timestamp: ts,
+        name: "eyes",
+      });
       // Check if this thread already has a topic ID
       let topicId = await c.env.KV.get(kvKey);
 
@@ -89,6 +95,14 @@ app.all("/slack/events", async (c) => {
             topicResponse.status,
             errorText
           );
+
+          // Remove eyes emoji before returning error
+          await context.client.reactions.remove({
+            channel: channel,
+            timestamp: ts,
+            name: "eyes",
+          });
+
           await context.say({
             text: `Failed to create conversation (${topicResponse.status}): ${errorText}`,
             thread_ts: threadId,
@@ -127,6 +141,14 @@ app.all("/slack/events", async (c) => {
           messageResponse.status,
           errorText
         );
+
+        // Remove eyes emoji before returning error
+        await context.client.reactions.remove({
+          channel: channel,
+          timestamp: ts,
+          name: "eyes",
+        });
+
         await context.say({
           text: `Failed to process message (${messageResponse.status}): ${errorText}`,
           thread_ts: threadId,
@@ -163,8 +185,27 @@ app.all("/slack/events", async (c) => {
         text: slackFormattedText,
         thread_ts: threadId,
       });
+
+      // Remove the eyes emoji reaction after responding
+      await context.client.reactions.remove({
+        channel: channel,
+        timestamp: ts,
+        name: "eyes",
+      });
     } catch (error) {
       console.error("Error processing message:", error);
+
+      // Try to remove the eyes emoji even if there was an error
+      try {
+        await context.client.reactions.remove({
+          channel: channel,
+          timestamp: ts,
+          name: "eyes",
+        });
+      } catch (removeError) {
+        console.error("Failed to remove reaction:", removeError);
+      }
+
       await context.say({
         text: `Error: ${
           error instanceof Error ? error.message : String(error)
